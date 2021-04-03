@@ -4,11 +4,11 @@
 #include <string.h>
 #include <errno.h>
 
-
 // This is the start of the code to parse the command line options. It should be
 // fairly complete but hasn't been extensively tested.
 
-int parseOptions(int argc, char * argv[], struct commandOptions * co) {
+int parseOptions(int argc, char *argv[], struct commandOptions *co)
+{
 
   // First set the command options structure to known values
 
@@ -21,84 +21,109 @@ int parseOptions(int argc, char * argv[], struct commandOptions * co) {
   co->timeout = 0;
   co->hostname = NULL;
   co->port = 0;
-  
+
   int i;
   int lastTwo = 0;
-  
+
   // iterate over each argument and classify it and
   // store information in the co structure;
-  
-  for (i = 1; i < argc; i++) {
+
+  for (i = 1; i < argc; i++)
+  {
     // This next line is for illustraction purposes only and needs to be removed
-    // once things are working 
-    fprintf(stderr, "Remove before submitting Arg %d is: %s\n", i, argv[i]);
+    // once things are working
+    // fprintf(stderr, "Remove before submitting Arg %d is: %s\n", i, argv[i]);
 
     // Check for the various options
-    if ((strcmp(argv[i], K_OPTION) == 0) && (!lastTwo)) {
+    if ((strcmp(argv[i], K_OPTION) == 0) && (!lastTwo))
+    {
       co->option_k = 1;
-    } else if ((strcmp(argv[i], L_OPTION) == 0) && (!lastTwo)) {
+    }
+    else if ((strcmp(argv[i], L_OPTION) == 0) && (!lastTwo))
+    {
       co->option_l = 1;
-    } else if ((strcmp(argv[i], V_OPTION) ==0 ) && (!lastTwo)) {
+    }
+    else if ((strcmp(argv[i], V_OPTION) == 0) && (!lastTwo))
+    {
       co->option_v = 1;
-    } else if ((strcmp(argv[i], R_OPTION) == 0 ) && (!lastTwo)){
+    }
+    else if ((strcmp(argv[i], R_OPTION) == 0) && (!lastTwo))
+    {
       co->option_r = 1;
-    } else if ((strcmp(argv[i], P_OPTION) == 0) && (!lastTwo)) {
+    }
+    else if ((strcmp(argv[i], P_OPTION) == 0) && (!lastTwo))
+    {
       // got a port match, check next argument for port number
       i++;
-      if (i >= argc) {
-	// not enough arguments
-	return PARSE_ERROR;
-      } else { // extract port number
-	// See man page for strtoul() as to why
-	// we check for errors by examining errno
-	errno = 0;
-	char *parseEnd;
-	co->source_port = strtoul(argv[i], &parseEnd, 10);
-	if (errno != 0 || parseEnd == argv[i]) {
-	  return PARSE_ERROR;
-	} 
-	co->option_p = 1;
+      if (i >= argc)
+      {
+        // not enough arguments
+        return PARSE_ERROR;
       }
-    } else if ((strcmp(argv[i], W_OPTION) == 0) && (!lastTwo)) {
+      else
+      { // extract port number
+        // See man page for strtoul() as to why
+        // we check for errors by examining errno
+        errno = 0;
+        char *parseEnd;
+        co->source_port = strtoul(argv[i], &parseEnd, 10);
+        if (errno != 0 || parseEnd == argv[i])
+        {
+          return PARSE_ERROR;
+        }
+        co->option_p = 1;
+      }
+    }
+    else if ((strcmp(argv[i], W_OPTION) == 0) && (!lastTwo))
+    {
       // got a W match, check next argument for timeout value
       i++;
-      if (i >= argc) {
-	// not enough arguments
-	return PARSE_ERROR;
-      } else { // extract timeout value
-	// See man page for strtoul() as to why
-	// we check for errors by examining errno, see err
-	errno = 0;
-	char *parseEnd = NULL;
-	co->timeout = strtoul(argv[i], &parseEnd, 10);
-	if (errno != 0 || argv[i] == parseEnd) {
-	  return PARSE_ERROR;
-	}
-	co->option_w = 1;
+      if (i >= argc)
+      {
+        // not enough arguments
+        return PARSE_ERROR;
       }
-
-    } else {
+      else
+      { // extract timeout value
+        // See man page for strtoul() as to why
+        // we check for errors by examining errno, see err
+        errno = 0;
+        char *parseEnd = NULL;
+        co->timeout = strtoul(argv[i], &parseEnd, 10);
+        if (errno != 0 || argv[i] == parseEnd)
+        {
+          return PARSE_ERROR;
+        }
+        co->option_w = 1;
+      }
+    }
+    else
+    {
       // Things are tricker - If there is only one argument left then it is a port number.
       // if there are two arguments left then it is a hostname and port number and
-      // if there are more arguments left then there are too many paramters on the line. 
-      // and if there are more parameters on the line then this is a bug. 
+      // if there are more arguments left then there are too many paramters on the line.
+      // and if there are more parameters on the line then this is a bug.
       int argsLeft = argc - i;
-      if (argsLeft > 2) return PARSE_TOOMANY_ARGS;
+      if (argsLeft > 2)
+        return PARSE_TOOMANY_ARGS;
 
-      if (argsLeft == 2) { //  hostName 
-	co->hostname = argv[i];
-	i++;
-	argsLeft--;
+      if (argsLeft == 2)
+      { //  hostName
+        co->hostname = argv[i];
+        i++;
+        argsLeft--;
       }
 
-      if (argsLeft == 1) { // port
-	errno = 0;
-	char *parseEnd = NULL;
-	co->port = strtoul(argv[i], &parseEnd, 10);
-	if (errno != 0 || parseEnd == argv[i]) {
-	  co->port = 0;
-	  return PARSE_ERROR;
-	}	
+      if (argsLeft == 1)
+      { // port
+        errno = 0;
+        char *parseEnd = NULL;
+        co->port = strtoul(argv[i], &parseEnd, 10);
+        if (errno != 0 || parseEnd == argv[i])
+        {
+          co->port = 0;
+          return PARSE_ERROR;
+        }
       }
     }
   }

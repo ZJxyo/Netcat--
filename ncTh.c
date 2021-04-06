@@ -11,12 +11,11 @@
 #include <netinet/in.h>
 #include <ifaddrs.h>
 #include <arpa/inet.h>
-#include <poll.h>
 #include <unistd.h>
 #include <netdb.h>
 #include "Thread.h"
 #include <pthread.h>
-#include <fcntl.h>
+#include <signal.h>
 #include <sys/time.h>
 
 #define BUF_LEN 128
@@ -37,7 +36,6 @@ struct thread_params
   int *fds;
   int thread_num;
   int index;
-  int *cancellable;
 };
 
 int main(int argc, char **argv)
@@ -161,7 +159,6 @@ void client_mode(struct commandOptions cmdOps)
   // setup thread parameters
   int fds[1];
   memset(fds, -1, sizeof(int));
-  int cancellable = 0;
   pthread_attr_t attr;
   pthread_attr_init(&attr);
 
@@ -210,8 +207,14 @@ void client_mode(struct commandOptions cmdOps)
     exit(2);
   }
 
-  close(0);
-  close(1);
+  if (joinThread(input_thread, NULL))
+  {
+    if (cmdOps.option_v)
+    {
+      perror("failed to join\n");
+    }
+    exit(2);
+  }
   return;
 }
 
@@ -219,8 +222,6 @@ void server_mode(struct commandOptions cmdOps)
 {
   //socket setups
   int server_socket = socket(PF_INET, SOCK_STREAM, 0);
-
-  fcntl(server_socket, F_SETFL, O_NONBLOCK);
 
   struct sockaddr_in server_address;
   get_local_address(&server_address, cmdOps.option_v);
@@ -246,7 +247,6 @@ void server_mode(struct commandOptions cmdOps)
   // setup for threads
   int fds[thread_num];
   memset(fds, -1, thread_num * sizeof(int));
-  int cancellable = 0;
   pthread_attr_t attr;
   pthread_attr_init(&attr);
 
@@ -270,6 +270,7 @@ void server_mode(struct commandOptions cmdOps)
   struct Thread *threads[thread_num];
   struct thread_params params[thread_num];
 
+  dprintf(2, "waiting\n");
   // create threads
   for (int i = 0; i < thread_num; i++)
   {
@@ -278,7 +279,6 @@ void server_mode(struct commandOptions cmdOps)
     params[i].fds = fds;
     params[i].thread_num = thread_num;
     params[i].index = i;
-    params[i].cancellable = &cancellable;
 
     void *thread = createThread(server_thread, &(params[i]));
 
@@ -307,7 +307,15 @@ void server_mode(struct commandOptions cmdOps)
     }
   }
 
-  close(0);
+  if (joinThread(input_thread, NULL))
+  {
+    if (cmdOps.option_v)
+    {
+      perror("failed to join\n");
+    }
+    exit(2);
+  }
+
   return;
 }
 
@@ -320,39 +328,36 @@ void *server_thread(void *arg)
   int *fds = params->fds;
   int thread_num = params->thread_num;
   int index = params->index;
-  int *cancellable = params->cancellable;
 
   while (1)
   {
-    // should be cancelled
-    if (*cancellable)
+    int client_socket = accept(socket, NULL, NULL);
+
+    // interrupted by signal
+    if (client_socket == -1)
     {
       return NULL;
     }
 
-    int client_socket = accept(socket, NULL, NULL);
-
-    // failed to accept
-    if (client_socket == -1)
-    {
-      sleep(1);
-      continue;
-    }
-
     // store socket
     fds[index] = client_socket;
+
+    struct sockaddr_in addr;
+    socklen_t addr_size = sizeof(struct sockaddr_in);
+    getsockname(client_socket, (struct sockaddr *)&addr, &addr_size);
+    char *client_ip = inet_ntoa(addr.sin_addr);
+    int client_port = ntohs(addr.sin_port);
+    // printf("ip address: %s\n", client_ip);
+    // printf("port: %d\n", client_port);
+    dprintf(2, "accepted\n");
+    dprintf(2, "%s\n", client_ip);
+    dprintf(2, "%d\n", client_port);
 
     while (1)
     {
       //read
       char buf[BUF_LEN];
       int num_received = recv(client_socket, buf, BUF_LEN, 0);
-
-      if (num_received == -1)
-      {
-        sleep(1);
-        continue;
-      }
 
       if (num_received > 0) // received a message
       {
@@ -369,12 +374,11 @@ void *server_thread(void *arg)
       }
       else
       {
+        close(client_socket);
+        fds[index] = -1;
         break;
       }
     }
-
-    close(client_socket);
-    fds[index] = -1;
 
     // check if there's other clients connected
     for (int i = 0; i < thread_num; i++)
@@ -384,12 +388,14 @@ void *server_thread(void *arg)
         break;
       }
 
-      if (i == thread_num - 1 && cmdOps.option_k == 0) // tell other threads to terminate if no other clients and -k is not set
+      if (i == thread_num - 1 && cmdOps.option_k == 0) // raise a signal if no other clients and -k is not set
       {
-        *cancellable = 1;
+        raise(14);
         return NULL;
       }
     }
+
+    dprintf(2, "waiting\n");
   }
   return NULL;
 }
@@ -412,13 +418,7 @@ void *client_thread(void *arg)
 
     int num_received = recv(fds[0], buf, BUF_LEN, 0);
 
-    // recv returned due to error
-    if (num_received == -1)
-    {
-      return NULL;
-    }
-
-    if (num_received) // received a message
+    if (num_received > 0) // received a message
     {
       buf[num_received] = '\0';
       printf("%s", buf);
@@ -426,6 +426,7 @@ void *client_thread(void *arg)
     else
     {
       close(fds[0]);
+      raise(14);
       return NULL;
     }
   }
@@ -451,11 +452,6 @@ void *stdin_thread(void *arg)
 
     int num_received = read(0, buf, BUF_LEN);
 
-    if (num_received == -1)
-    {
-      return NULL;
-    }
-
     if (num_received > 0) // send message if received something
     {
       for (int i = 0; i < thread_num; i++)
@@ -465,6 +461,11 @@ void *stdin_thread(void *arg)
           send(fds[i], buf, num_received, 0);
         }
       }
+    }
+    else
+    {
+      close(0);
+      return NULL;
     }
   }
 }

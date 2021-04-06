@@ -229,6 +229,8 @@ void server_mode(struct commandOptions cmdOps)
   pfds[0].events = POLLIN;
   fd_count++;
 
+  dprintf(2, "waiting\n");
+
   while (1)
   {
     poll(pfds, fd_count, -1);
@@ -257,6 +259,18 @@ void process_server(int index, struct pollfd *pfds, int *fd_count, int option_r)
 {
   int client_socket = accept(pfds[index].fd, NULL, NULL);
 
+  struct sockaddr_in addr;
+  socklen_t addr_size = sizeof(struct sockaddr_in);
+  getsockname(client_socket, (struct sockaddr *)&addr, &addr_size);
+  char *client_ip = inet_ntoa(addr.sin_addr);
+  int client_port = ntohs(addr.sin_port);
+  // printf("ip address: %s\n", client_ip);
+  // printf("port: %d\n", client_port);
+  dprintf(2, "accepted\n");
+  dprintf(2, "%s\n", client_ip);
+  dprintf(2, "%d\n", client_port);
+
+
   // only server socket in pfds
   if (*fd_count == 1)
   {
@@ -275,6 +289,8 @@ void process_server(int index, struct pollfd *pfds, int *fd_count, int option_r)
   if (!option_r || *fd_count >= 2 + THREAD_COUNT)
   {
     pfds[0].fd = -pfds[0].fd;
+  } else {
+    dprintf(2, "waiting\n");
   }
 
   return;
@@ -349,6 +365,7 @@ void process_client(int index, struct pollfd *pfds, int *fd_count, int option_r,
 
     if (!option_r || *fd_count == 1 + THREAD_COUNT) // no -r or has slot, start accepting
     {
+      dprintf(2, "waiting\n");
       pfds[0].fd = -pfds[0].fd;
     }
   }

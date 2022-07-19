@@ -23,8 +23,6 @@
 
 void client_mode(struct commandOptions cmdOps);
 void server_mode(struct commandOptions cmdOps);
-void get_local_address(struct sockaddr_in *local_address, int option_v);
-void bind_address_and_port(int socket, struct sockaddr_in *local_address, int port, int option_v);
 void *server_thread(void *arg);
 void *client_thread(void *arg);
 void *stdin_thread(void *arg);
@@ -93,45 +91,62 @@ int main(int argc, char **argv)
 
 void client_mode(struct commandOptions cmdOps)
 {
-  //create and bind
-  int client_socket = socket(PF_INET, SOCK_STREAM, 0);
+  struct addrinfo hints, *res;
+  int sockfd;
 
-  struct sockaddr_in client_address;
-  get_local_address(&client_address, cmdOps.option_v);
+  memset(&hints, 0, sizeof hints);
+  hints.ai_family = AF_INET; // use IPv4
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_flags = AI_PASSIVE; // fill in my IP for me
 
-  int source_port = 0;
+  char source_port[6];
 
-  if (cmdOps.option_p)
+  if (cmdOps.source_port != 0) // bind to source port
   {
-    source_port = cmdOps.source_port;
+    sprintf(source_port, "%u", cmdOps.source_port);
+  }
+  else // bind to any port
+  {
+    sprintf(source_port, "%u", (unsigned int)0);
   }
 
-  bind_address_and_port(client_socket, &client_address, source_port, cmdOps.option_v);
+  getaddrinfo(NULL, source_port, &hints, &res);
+  sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+  if (sockfd == -1)
+  {
+    perror("failed to create socket\n");
+    exit(-1);
+  }
+  else
+  {
+    if (bind(sockfd, res->ai_addr, res->ai_addrlen) == -1)
+    {
+      perror("failed to bind\n");
+      exit(-1);
+    }
+  }
 
   // lookup server ip
-  struct addrinfo hints, *server_addresses, *ai;
+  struct addrinfo *server_addresses, *ai;
 
   memset(&hints, 0, sizeof(hints));
 
   hints.ai_family = PF_INET;
   hints.ai_socktype = SOCK_STREAM;
 
-  char buf[6];
+  char port[6];
 
-  sprintf(buf, "%u", cmdOps.port);
+  sprintf(port, "%u", cmdOps.port);
 
-  if (getaddrinfo(cmdOps.hostname, buf, &hints, &server_addresses))
+  if (getaddrinfo(cmdOps.hostname, port, &hints, &server_addresses))
   {
-    if (cmdOps.option_v)
-    {
-      perror("no ip address found\n");
-    }
+    perror("no ip address found\n");
     exit(2);
   }
 
   for (ai = server_addresses; ai; ai = ai->ai_next)
   {
-    if (connect(client_socket, ai->ai_addr, ai->ai_addrlen) == 0)
+    if (connect(sockfd, ai->ai_addr, ai->ai_addrlen) == 0)
     {
       if (cmdOps.option_v)
       {
@@ -139,18 +154,11 @@ void client_mode(struct commandOptions cmdOps)
       }
       break;
     }
-    else if (cmdOps.option_v)
-    {
-      perror("failed to connect\n");
-    }
   }
 
   if (ai == NULL)
   {
-    if (cmdOps.option_v)
-    {
-      perror("all addresses failed to connect\n");
-    }
+    perror("failed to connect to all addresses\n");
     exit(2);
   }
 
@@ -184,7 +192,7 @@ void client_mode(struct commandOptions cmdOps)
   params.cmdOps = cmdOps;
   params.fds = fds;
 
-  fds[0] = client_socket;
+  fds[0] = sockfd;
 
   void *thread = createThread(client_thread, &params);
 
@@ -220,15 +228,42 @@ void client_mode(struct commandOptions cmdOps)
 
 void server_mode(struct commandOptions cmdOps)
 {
-  //socket setups
-  int server_socket = socket(PF_INET, SOCK_STREAM, 0);
+  struct addrinfo hints, *res;
+  int sockfd;
 
-  struct sockaddr_in server_address;
-  get_local_address(&server_address, cmdOps.option_v);
+  memset(&hints, 0, sizeof hints);
+  hints.ai_family = AF_INET; // use IPv4
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_flags = AI_PASSIVE; // fill in my IP for me
 
-  bind_address_and_port(server_socket, &server_address, cmdOps.source_port, cmdOps.option_v);
+  char source_port[6];
 
-  if (listen(server_socket, THREAD_NUM))
+  if (cmdOps.source_port != 0) // bind to source port
+  {
+    sprintf(source_port, "%u", cmdOps.source_port);
+  }
+  else // bind to any port
+  {
+    sprintf(source_port, "%u", (unsigned int)0);
+  }
+
+  getaddrinfo(NULL, source_port, &hints, &res);
+  sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+  if (sockfd == -1)
+  {
+    perror("failed to create socket\n");
+    exit(-1);
+  }
+  else
+  {
+    if (bind(sockfd, res->ai_addr, res->ai_addrlen) == -1)
+    {
+      perror("failed to bind\n");
+      exit(-1);
+    }
+  }
+
+  if (listen(sockfd, THREAD_NUM))
   {
     if (cmdOps.option_v)
     {
@@ -275,7 +310,7 @@ void server_mode(struct commandOptions cmdOps)
   for (int i = 0; i < thread_num; i++)
   {
     params[i].cmdOps = cmdOps;
-    params[i].socket = server_socket;
+    params[i].socket = sockfd;
     params[i].fds = fds;
     params[i].thread_num = thread_num;
     params[i].index = i;
@@ -331,20 +366,20 @@ void *server_thread(void *arg)
 
   while (1)
   {
-    int client_socket = accept(socket, NULL, NULL);
+    int sockfd = accept(socket, NULL, NULL);
 
     // interrupted by signal
-    if (client_socket == -1)
+    if (sockfd == -1)
     {
       return NULL;
     }
 
     // store socket
-    fds[index] = client_socket;
+    fds[index] = sockfd;
 
     struct sockaddr_in addr;
     socklen_t addr_size = sizeof(struct sockaddr_in);
-    getsockname(client_socket, (struct sockaddr *)&addr, &addr_size);
+    getsockname(sockfd, (struct sockaddr *)&addr, &addr_size);
     char *client_ip = inet_ntoa(addr.sin_addr);
     int client_port = ntohs(addr.sin_port);
     // printf("ip address: %s\n", client_ip);
@@ -355,9 +390,9 @@ void *server_thread(void *arg)
 
     while (1)
     {
-      //read
+      // read
       char buf[BUF_LEN];
-      int num_received = recv(client_socket, buf, BUF_LEN, 0);
+      int num_received = recv(sockfd, buf, BUF_LEN, 0);
 
       if (num_received > 0) // received a message
       {
@@ -374,7 +409,7 @@ void *server_thread(void *arg)
       }
       else
       {
-        close(client_socket);
+        close(sockfd);
         fds[index] = -1;
         break;
       }
@@ -430,6 +465,8 @@ void *client_thread(void *arg)
       return NULL;
     }
   }
+
+  return NULL;
 }
 
 void *stdin_thread(void *arg)
@@ -468,83 +505,4 @@ void *stdin_thread(void *arg)
       return NULL;
     }
   }
-}
-
-void get_local_address(struct sockaddr_in *local_address, int option_v)
-{
-  struct ifaddrs *server_addresses, *ifa;
-
-  char *address;
-
-  getifaddrs(&server_addresses);
-
-  for (ifa = server_addresses; ifa; ifa = ifa->ifa_next)
-  {
-    if (ifa->ifa_addr && ifa->ifa_addr->sa_family == PF_INET)
-    {
-      local_address->sin_addr.s_addr = ((struct sockaddr_in *)ifa->ifa_addr)->sin_addr.s_addr;
-      local_address->sin_family = PF_INET;
-      address = inet_ntoa(local_address->sin_addr);
-      if (strcmp(address, "127.0.0.1") != 0)
-      {
-        break;
-      }
-    }
-  }
-
-  if (ifa == NULL)
-  {
-    if (option_v)
-    {
-      perror("no usable addresses\n");
-    }
-    exit(2);
-  }
-
-  if (option_v)
-  {
-    printf("ip address: %s\n", address);
-  }
-
-  freeifaddrs(server_addresses);
-  return;
-}
-
-void bind_address_and_port(int socket, struct sockaddr_in *local_address, int port, int option_v)
-{
-  setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (int *)1, sizeof(int));
-
-  int num = port;
-  if (port <= 0)
-  {
-    while (1)
-    {
-      num = rand();
-      if (num >= 1024 && num <= 65535)
-      {
-        local_address->sin_port = htons(num);
-        break;
-      }
-    }
-  }
-
-  while (bind(socket, (struct sockaddr *)local_address, sizeof(*local_address)))
-  {
-    while (1)
-    {
-      num = rand();
-      if (num >= 1024 && num <= 65535)
-      {
-        local_address->sin_port = htons(num);
-        break;
-      }
-    }
-  }
-
-  if (option_v)
-  {
-    printf("port: %d\n", num);
-  }
-
-  return;
 }
